@@ -30,6 +30,7 @@ impl MigrationTrait for Migration {
                             .from(Post::Table, Post::UserId)
                             .to(User::Table, User::Id),
                     )
+                    .col(ColumnDef::new(Post::Slug).string().not_null())
                     .col(ColumnDef::new(Post::Title).string().not_null())
                     .col(ColumnDef::new(Post::Text).string().not_null())
                     .col(ColumnDef::new(Post::IsPublished).boolean().not_null())
@@ -54,6 +55,7 @@ pub enum Post {
     Table,
     Id,
     UserId,
+    Slug,
     Title,
     Text,
     IsPublished,

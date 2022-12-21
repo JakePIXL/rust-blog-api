@@ -18,3 +18,4 @@ serde = { version = "1.0.151", features = ["derive"] }
 tracing-subscriber = "0.3.16"
 entities = { path = "entities" }
 migration = { path = "migration" }
+slugify = "0.1.0"

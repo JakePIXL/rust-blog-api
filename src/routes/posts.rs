@@ -4,6 +4,7 @@ use serde::Deserialize;
 use sea_orm::*;
 
 use entities::post::Entity as Post;
+use slugify::slugify;
 
 #[derive(Debug, Deserialize)]
 pub struct Params {
@@ -11,7 +12,7 @@ pub struct Params {
     posts_per_page: Option<u64>,
 }
 
-#[get("/")]
+#[get("/posts/")]
 async fn get_all(conn: web::Data<DatabaseConnection>, params: web::Query::<Params>) -> impl Responder {
 
     let page = params.page.unwrap_or(1);
@@ -35,7 +36,7 @@ async fn get_all(conn: web::Data<DatabaseConnection>, params: web::Query::<Param
     }
 }
 
-#[get("/{id}")]
+#[get("/posts/{id}")]
 async fn get_by_id(conn: web::Data<DatabaseConnection>, id: web::Path<i32>) -> HttpResponse {
 
     let post = Post::find()
@@ -50,10 +51,32 @@ async fn get_by_id(conn: web::Data<DatabaseConnection>, id: web::Path<i32>) -> H
     }
 }
 
-#[post("/")]
+#[get("/posts/{slug}")]
+async fn get_by_slug(conn: web::Data<DatabaseConnection>, slug: web::Path<String>) -> HttpResponse {
+
+    let post = Post::find()
+        .filter(entities::post::Column::Slug.eq(slug.clone()))
+        .one(conn.as_ref())
+        .await
+        .expect("could not find post");
+
+    match post {
+        Some(post) => HttpResponse::Ok().json(post),
+        None => return HttpResponse::NotFound().body(format!("post with slug: {} not found", slug.clone())),
+    }
+}
+
+#[post("/posts/")]
 async fn create(conn: web::Data<DatabaseConnection>, post_form: web::Form<entities::post::Model>) -> impl Responder {
 
     entities::post::ActiveModel {
+        slug: Set({
+            if post_form.slug.is_none() {
+                Some(slugify!(&post_form.title))
+            } else {
+                post_form.slug.clone()
+            }
+        }),
         title: Set(post_form.title.clone()),
         text: Set(post_form.text.clone()),
         user_id: Set(post_form.user_id.clone()),
@@ -67,7 +90,7 @@ async fn create(conn: web::Data<DatabaseConnection>, post_form: web::Form<entiti
     HttpResponse::Ok().body("created post")
 }
 
-#[patch("/{id}")]
+#[patch("/posts/{id}")]
 async fn update(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, post_form: web::Form<entities::post::Model>) -> HttpResponse {
 
     let post = Post::find()
@@ -80,6 +103,13 @@ async fn update(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, post_fo
         Some(post) => {
             let updated_post = entities::post::ActiveModel {
                 id: Set(post.id.clone()),
+                slug: Set({
+                    if post_form.slug.is_none() {
+                        Some(slugify!(&post_form.title))
+                    } else {
+                        post_form.slug.clone()
+                    }
+                }),
                 title: Set(post_form.title.clone()),
                 text: Set(post_form.text.clone()),
                 user_id: Set(post_form.user_id.clone()),
@@ -93,7 +123,7 @@ async fn update(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, post_fo
     }
 }
 
-#[delete("/{id}")]
+#[delete("/posts/{id}")]
 async fn delete(conn: web::Data<DatabaseConnection>, id: web::Path<i32>) -> HttpResponse {
 
     let found_post = Post::find()
@@ -116,4 +146,13 @@ async fn delete(conn: web::Data<DatabaseConnection>, id: web::Path<i32>) -> Http
         }
         None => return HttpResponse::NotFound().body(format!("post with id: {} not found", id.clone())),
     }
+}
+
+pub fn init_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(get_all);
+    cfg.service(get_by_id);
+    cfg.service(get_by_slug);
+    cfg.service(create);
+    cfg.service(update);
+    cfg.service(delete);
 }
