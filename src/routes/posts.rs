@@ -1,15 +1,60 @@
-use actix_web::{web, HttpResponse, get, post, delete, patch, Responder};
-use serde::Deserialize;
+use actix_web::{web, HttpResponse, get, post, delete, patch, Responder, HttpRequest};
+// use actix_web_httpauth::headers::authorization::Authorization;
+use serde::{Deserialize, Serialize};
+
+use jsonwebtoken::{Algorithm, DecodingKey, decode, Validation};
+use jsonwebtoken::errors::Result as JwtResult;
 
 use sea_orm::*;
 
 use entities::post::Entity as Post;
 use slugify::slugify;
 
+use tracing::info;
+
 #[derive(Debug, Deserialize)]
 pub struct Params {
     page: Option<u64>,
     posts_per_page: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Claims {
+    user_id: i32,
+    email: String,
+    exp: i64,
+}
+
+fn validate_token(token: &str) -> JwtResult<Claims> {
+    let validation = Validation::new(Algorithm::HS256);
+    let secret = "secret_key";
+    let key = DecodingKey::from_secret(secret.as_ref());
+
+    let data = decode::<Claims>(token, &key, &validation)?;
+    Ok(data.claims)
+}
+
+async fn check_is_valid(conn: &DatabaseConnection, user_id: i32, needs_admin: bool) -> bool {
+    let user = entities::user::Entity::find()
+        .filter(entities::user::Column::Id.eq(user_id))
+        .one(conn)
+        .await
+        .expect("could not find user");
+
+    match user {
+        Some(user) => {
+            if !user.is_active {
+                return false;
+            }
+
+            if needs_admin && !user.is_admin {
+                return false;
+            }
+
+            return true;
+        }
+        None => return false,
+    }
 }
 
 #[get("/posts/")]
@@ -67,7 +112,36 @@ async fn get_by_slug(conn: web::Data<DatabaseConnection>, slug: web::Path<String
 }
 
 #[post("/posts/")]
-async fn create(conn: web::Data<DatabaseConnection>, post_form: web::Form<entities::post::Model>) -> impl Responder {
+async fn create(conn: web::Data<DatabaseConnection>, post_form: web::Form<entities::post::Model>, req: HttpRequest) -> impl Responder {
+
+    let auth_header = req.headers().get("Authorization").unwrap().to_str().unwrap_or("");
+
+    if !auth_header.starts_with("Bearer ") {
+        return HttpResponse::Unauthorized().body("invalid token");
+    }
+
+    let token = auth_header.split(" ").collect::<Vec<&str>>()[1];
+
+    let user = match validate_token(token) {
+        Ok(data) => {
+            if !check_is_valid(conn.as_ref(), data.user_id, true).await {
+                return HttpResponse::Unauthorized().body("You are unauthorized to use this route.");
+            }
+            data
+        },
+        Err(e) => return HttpResponse::Unauthorized().body(format!("could not validate token: {}", e)),
+    };
+
+
+    match Post::find()
+        .filter(entities::post::Column::Slug.eq(slugify!(&post_form.title)))
+        .one(conn.as_ref())
+        .await
+        .expect("could not find post")
+    {
+        Some(_) => return HttpResponse::BadRequest().body(format!("post with slug {} already exists", slugify!(&post_form.title))),
+        None => (),
+    }
 
     entities::post::ActiveModel {
         slug: Set({
@@ -79,7 +153,7 @@ async fn create(conn: web::Data<DatabaseConnection>, post_form: web::Form<entiti
         }),
         title: Set(post_form.title.clone()),
         text: Set(post_form.text.clone()),
-        user_id: Set(post_form.user_id.clone()),
+        user_id: Set(Some(user.user_id.clone())),
         is_published: Set(post_form.is_published.clone()),
         ..Default::default()
     }
@@ -91,7 +165,25 @@ async fn create(conn: web::Data<DatabaseConnection>, post_form: web::Form<entiti
 }
 
 #[patch("/posts/{id}")]
-async fn update(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, post_form: web::Form<entities::post::Model>) -> HttpResponse {
+async fn update(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, post_form: web::Form<entities::post::Model>, req: HttpRequest) -> impl Responder {
+
+    let auth_header = req.headers().get("Authorization").unwrap().to_str().unwrap_or("");
+
+    if !auth_header.starts_with("Bearer ") {
+        return HttpResponse::Unauthorized().body("invalid token");
+    }
+
+    let token = auth_header.split(" ").collect::<Vec<&str>>()[1];
+
+    match validate_token(token) {
+        Ok(data) => {
+            if !check_is_valid(conn.as_ref(), data.user_id, true).await {
+                return HttpResponse::Unauthorized().body("You are unauthorized to use this route.");
+            }
+            data
+        },
+        Err(e) => return HttpResponse::Unauthorized().body(format!("could not validate token: {}", e)),
+    };
 
     let post = Post::find()
         .filter(entities::post::Column::Id.eq(id.clone()))
@@ -112,7 +204,6 @@ async fn update(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, post_fo
                 }),
                 title: Set(post_form.title.clone()),
                 text: Set(post_form.text.clone()),
-                user_id: Set(post_form.user_id.clone()),
                 is_published: Set(post_form.is_published.clone()),
                 ..Default::default()
             };
@@ -124,7 +215,25 @@ async fn update(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, post_fo
 }
 
 #[delete("/posts/{id}")]
-async fn delete(conn: web::Data<DatabaseConnection>, id: web::Path<i32>) -> HttpResponse {
+async fn delete(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, req: HttpRequest) -> impl Responder {
+
+    let auth_header = req.headers().get("Authorization").unwrap().to_str().unwrap_or("");
+
+    if !auth_header.starts_with("Bearer ") {
+        return HttpResponse::Unauthorized().body("invalid token");
+    }
+
+    let token = auth_header.split(" ").collect::<Vec<&str>>()[1];
+
+    let user = match validate_token(token) {
+        Ok(data) => {
+            if !check_is_valid(conn.as_ref(), data.user_id, true).await {
+                return HttpResponse::Unauthorized().body("You are unauthorized to use this route.");
+            }
+            data
+        },
+        Err(e) => return HttpResponse::Unauthorized().body(format!("could not validate token: {}", e)),
+    };    
 
     let found_post = Post::find()
         .filter(entities::post::Column::Id.eq(id.clone()))
@@ -135,6 +244,11 @@ async fn delete(conn: web::Data<DatabaseConnection>, id: web::Path<i32>) -> Http
 
     match found_post {
         Some(post) => {
+
+            if post.user_id.unwrap() != user.user_id {
+                return HttpResponse::Unauthorized().body("user is not authorized to delete this post");
+            }
+
             entities::post::ActiveModel {
                 id: Set(id.clone()),
                 ..Default::default()

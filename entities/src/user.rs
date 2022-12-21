@@ -13,6 +13,7 @@ pub struct Model {
     pub email: String,
     pub password: String,
     pub is_active: bool,
+    pub is_admin: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -2,9 +2,9 @@ use actix_web::{web, HttpResponse, get, post, delete, put, Responder};
 
 use bcrypt::{hash, verify, DEFAULT_COST};
 
-use jsonwebtoken::{Header, Algorithm, EncodingKey, TokenData, Validation};
+use jsonwebtoken::{Header, Algorithm, EncodingKey};
 use jsonwebtoken::errors::Result as JwtResult;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{Utc, Duration};
 
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,15 @@ fn create_jwt(user_id: i32, email: &str, days: i64) -> JwtResult<String> {
     jsonwebtoken::encode(&header, &claims, &key)
 }
 
+// fn validate_token(token: &str) -> JwtResult<()> {
+//     let validation = Validation::new(Algorithm::HS256);
+//     let secret = "secret_key";
+//     let key = DecodingKey::from_secret(secret.as_ref());
+
+//     decode::<()>(token, &key, &validation)?;
+//     Ok(())
+// }
+
 #[get("/users/")]
 async fn get_all(conn: web::Data<DatabaseConnection>, params: web::Query::<Params>) -> impl Responder {
 
@@ -101,13 +110,14 @@ async fn create(conn: web::Data<DatabaseConnection>, user_form: web::Form<entiti
         email: Set(user_form.email.clone()),
         password: Set(hashed_password),
         is_active: Set(false),
+        is_admin: Set(false),
         ..Default::default()
     }
     .save(conn.as_ref())
     .await
     .unwrap();
 
-    HttpResponse::Ok().body("created user")
+    HttpResponse::Ok().body(format!("created user: {}", slugify!(&user_form.username)))
 }
 
 #[put("/users/{id}")]
