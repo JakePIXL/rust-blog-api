@@ -1,8 +1,8 @@
-use actix_web::{web, HttpResponse, get, post, delete, put, Responder};
+use actix_web::{web, HttpResponse, get, post, delete, put, Responder, HttpRequest};
 
 use bcrypt::{hash, verify, DEFAULT_COST};
 
-use jsonwebtoken::{Header, Algorithm, EncodingKey};
+use jsonwebtoken::{Algorithm, EncodingKey, DecodingKey, decode, Validation, Header};
 use jsonwebtoken::errors::Result as JwtResult;
 use chrono::{Utc, Duration};
 
@@ -61,17 +61,58 @@ fn create_jwt(user_id: i32, email: &str, days: i64) -> JwtResult<String> {
     jsonwebtoken::encode(&header, &claims, &key)
 }
 
-// fn validate_token(token: &str) -> JwtResult<()> {
-//     let validation = Validation::new(Algorithm::HS256);
-//     let secret = "secret_key";
-//     let key = DecodingKey::from_secret(secret.as_ref());
+fn validate_token(token: &str) -> JwtResult<Claims> {
+    let validation = Validation::new(Algorithm::HS256);
+    let secret = "secret_key";
+    let key = DecodingKey::from_secret(secret.as_ref());
 
-//     decode::<()>(token, &key, &validation)?;
-//     Ok(())
-// }
+    let data = decode::<Claims>(token, &key, &validation)?;
+    Ok(data.claims)
+}
+
+async fn check_is_valid(conn: &DatabaseConnection, user_id: i32, needs_admin: bool) -> bool {
+    let user = entities::user::Entity::find()
+        .filter(entities::user::Column::Id.eq(user_id))
+        .one(conn)
+        .await
+        .expect("could not find user");
+
+    match user {
+        Some(user) => {
+            if !user.is_active {
+                return false;
+            }
+
+            if needs_admin && !user.is_admin {
+                return false;
+            }
+
+            return true;
+        }
+        None => return false,
+    }
+}
 
 #[get("/users/")]
-async fn get_all(conn: web::Data<DatabaseConnection>, params: web::Query::<Params>) -> impl Responder {
+async fn get_all(conn: web::Data<DatabaseConnection>, params: web::Query::<Params>, req: HttpRequest) -> impl Responder {
+
+    let auth_header = req.headers().get("Authorization").unwrap().to_str().unwrap_or("");
+
+    if !auth_header.starts_with("Bearer ") {
+        return HttpResponse::Unauthorized().body("invalid token");
+    }
+
+    let token = auth_header.split(" ").collect::<Vec<&str>>()[1];
+
+    match validate_token(token) {
+        Ok(data) => {
+            if !check_is_valid(conn.as_ref(), data.user_id, true).await {
+                return HttpResponse::Unauthorized().body("You are unauthorized to use this route.");
+            }
+            data
+        },
+        Err(e) => return HttpResponse::Unauthorized().body(format!("could not validate token: {}", e)),
+    };
 
     let page = params.page.unwrap_or(1);
     let users_per_page = params.users_per_page.unwrap_or(10);
@@ -95,13 +136,40 @@ async fn get_all(conn: web::Data<DatabaseConnection>, params: web::Query::<Param
 }
 
 #[get("/users/{id}")]
-async fn get_by_id() -> HttpResponse {
-    HttpResponse::Ok().body("get post by id")
+async fn get_by_id(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, req: HttpRequest) -> impl Responder {
+
+    let auth_header = req.headers().get("Authorization").unwrap().to_str().unwrap_or("");
+
+    if !auth_header.starts_with("Bearer ") {
+        return HttpResponse::Unauthorized().body("invalid token");
+    }
+
+    let token = auth_header.split(" ").collect::<Vec<&str>>()[1];
+
+    match validate_token(token) {
+        Ok(data) => {
+            if !check_is_valid(conn.as_ref(), data.user_id, true).await {
+                return HttpResponse::Unauthorized().body("You are unauthorized to use this route.");
+            }
+            data
+        },
+        Err(e) => return HttpResponse::Unauthorized().body(format!("could not validate token: {}", e)),
+    };
+
+    let user = User::find()
+        .filter(entities::user::Column::Id.eq(id.clone()))
+        .one(conn.as_ref())
+        .await
+        .expect("could not find post");
+
+    match user {
+        Some(user) => HttpResponse::Ok().json(user),
+        None => return HttpResponse::NotFound().body(format!("user with id: {} not found", id.clone())),
+    }
 }
 
 #[post("/users/")]
 async fn create(conn: web::Data<DatabaseConnection>, user_form: web::Form<entities::user::Model>) -> impl Responder {
-
 
     let hashed_password = hash_password(&user_form.password).unwrap();
 
@@ -121,12 +189,50 @@ async fn create(conn: web::Data<DatabaseConnection>, user_form: web::Form<entiti
 }
 
 #[put("/users/{id}")]
-async fn update() -> HttpResponse {
+async fn update(conn: web::Data<DatabaseConnection>, req: HttpRequest) -> impl Responder {
+
+    let auth_header = req.headers().get("Authorization").unwrap().to_str().unwrap_or("");
+
+    if !auth_header.starts_with("Bearer ") {
+        return HttpResponse::Unauthorized().body("invalid token");
+    }
+
+    let token = auth_header.split(" ").collect::<Vec<&str>>()[1];
+
+    match validate_token(token) {
+        Ok(data) => {
+            if !check_is_valid(conn.as_ref(), data.user_id, true).await {
+                return HttpResponse::Unauthorized().body("You are unauthorized to use this route.");
+            }
+            data
+        },
+        Err(e) => return HttpResponse::Unauthorized().body(format!("could not validate token: {}", e)),
+    };
+    
     HttpResponse::Ok().body("update")
 }
 
 #[delete("/users/{id}")]
-async fn delete() -> HttpResponse {
+async fn delete(conn: web::Data<DatabaseConnection>, req: HttpRequest) -> impl Responder {
+
+    let auth_header = req.headers().get("Authorization").unwrap().to_str().unwrap_or("");
+
+    if !auth_header.starts_with("Bearer ") {
+        return HttpResponse::Unauthorized().body("invalid token");
+    }
+
+    let token = auth_header.split(" ").collect::<Vec<&str>>()[1];
+
+    match validate_token(token) {
+        Ok(data) => {
+            if !check_is_valid(conn.as_ref(), data.user_id, true).await {
+                return HttpResponse::Unauthorized().body("You are unauthorized to use this route.");
+            }
+            data
+        },
+        Err(e) => return HttpResponse::Unauthorized().body(format!("could not validate token: {}", e)),
+    };
+    
     HttpResponse::Ok().body("delete")
 }
 

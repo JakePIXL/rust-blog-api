@@ -10,8 +10,6 @@ use sea_orm::*;
 use entities::post::Entity as Post;
 use slugify::slugify;
 
-use tracing::info;
-
 #[derive(Debug, Deserialize)]
 pub struct Params {
     page: Option<u64>,
