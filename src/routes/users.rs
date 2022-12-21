@@ -55,7 +55,7 @@ fn create_jwt(user_id: i32, email: &str, days: i64) -> JwtResult<String> {
         exp: expiration_date.timestamp(),
     };
 
-    let secret = "secret_key";
+    let secret = std::env::var("JWT_SECRET").unwrap_or("secret".to_string());
     let key = EncodingKey::from_secret(secret.as_ref());
 
     jsonwebtoken::encode(&header, &claims, &key)
@@ -63,7 +63,7 @@ fn create_jwt(user_id: i32, email: &str, days: i64) -> JwtResult<String> {
 
 fn validate_token(token: &str) -> JwtResult<Claims> {
     let validation = Validation::new(Algorithm::HS256);
-    let secret = "secret_key";
+    let secret = std::env::var("JWT_SECRET").unwrap_or("secret".to_string());
     let key = DecodingKey::from_secret(secret.as_ref());
 
     let data = decode::<Claims>(token, &key, &validation)?;

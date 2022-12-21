@@ -25,7 +25,7 @@ struct Claims {
 
 fn validate_token(token: &str) -> JwtResult<Claims> {
     let validation = Validation::new(Algorithm::HS256);
-    let secret = "secret_key";
+    let secret = std::env::var("JWT_SECRET").unwrap_or("secret".to_string());
     let key = DecodingKey::from_secret(secret.as_ref());
 
     let data = decode::<Claims>(token, &key, &validation)?;
@@ -132,19 +132,19 @@ async fn create(conn: web::Data<DatabaseConnection>, post_form: web::Form<entiti
 
 
     match Post::find()
-        .filter(entities::post::Column::Slug.eq(slugify!(&post_form.title)))
+        .filter(entities::post::Column::Slug.eq(slugify!(&post_form.title, max_length = 20)))
         .one(conn.as_ref())
         .await
         .expect("could not find post")
     {
-        Some(_) => return HttpResponse::BadRequest().body(format!("post with slug {} already exists", slugify!(&post_form.title))),
+        Some(_) => return HttpResponse::BadRequest().body(format!("post with slug {} already exists", slugify!(&post_form.title, max_length = 20))),
         None => (),
     }
 
     entities::post::ActiveModel {
         slug: Set({
             if post_form.slug.is_none() {
-                Some(slugify!(&post_form.title))
+                Some(slugify!(&post_form.title, max_length = 20))
             } else {
                 post_form.slug.clone()
             }
@@ -195,9 +195,9 @@ async fn update(conn: web::Data<DatabaseConnection>, id: web::Path<i32>, post_fo
                 id: Set(post.id.clone()),
                 slug: Set({
                     if post_form.slug.is_none() {
-                        Some(slugify!(&post_form.title))
+                        Some(slugify!(&post_form.title, max_length = 20))
                     } else {
-                        post_form.slug.clone()
+                        Some(slugify!(&post_form.slug.clone().unwrap(), max_length = 20))
                     }
                 }),
                 title: Set(post_form.title.clone()),
